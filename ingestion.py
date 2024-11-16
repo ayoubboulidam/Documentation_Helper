@@ -1,13 +1,12 @@
 import os  # Provides functions to interact with the operating system
-
 from dotenv import load_dotenv  # Loads environment variables from a .env file
 
-load_dotenv()  # Load environment variables into the application
+# Load environment variables into the application
+load_dotenv()
 
-from langchain.text_splitter import RecursiveCharacterTextSplitter  # Imports a tool for splitting text into chunks
-from langchain_community.document_loaders import ReadTheDocsLoader  # Imports a loader to read documentation from Read the Docs
 from langchain_google_genai import GoogleGenerativeAIEmbeddings  # Imports Google embeddings
 from langchain_pinecone import PineconeVectorStore  # Imports the Pinecone vector store for storage and retrieval
+from langchain_community.document_loaders import FireCrawlLoader  # Import FireCrawlLoader
 
 # Specify the embedding model
 embeddings = GoogleGenerativeAIEmbeddings(
@@ -15,35 +14,70 @@ embeddings = GoogleGenerativeAIEmbeddings(
     google_api_key=os.getenv("GOOGLE_API_KEY")  # Retrieves the Google API key from environment variables
 )
 
-def ingest_docs():
-    # Initialize the document loader with the path to documentation
-    loader = ReadTheDocsLoader(
-        "C:\\Users\\pc\\Desktop\\Documentation_Helper\\langchain-docs\\api.python.langchain.com\\en\\latest",
-        encoding="utf-8"  # Use UTF-8 encoding to avoid character decoding issues
-    )
+def ingest_docs2() -> None:
+    # Docker documentation URLs to be crawled
+    docker_documents_base_urls = [
+        "https://www.docker.com/blog/november-2024-updated-plans-announcement/",
+        "https://docs.docker.com/get-started/get-docker/",
+        "https://docs.docker.com/guides/",
+        "https://docs.docker.com/manuals/",
+        "https://docs.docker.com/reference/",
+        "https://docs.docker.com/get-started/",
+        "https://docker.qualtrics.com/jfe/form/SV_3IDfGscnmh99ex8",
+        "https://docs.docker.com/tags/admin/",
+        "https://docs.docker.com/tags/ai/",
+        "https://docs.docker.com/tags/app-dev/",
+        "https://docs.docker.com/tags/best-practices/",
+        "https://docs.docker.com/tags/cloud-services/",
+        "https://docs.docker.com/tags/data-science/",
+        "https://docs.docker.com/tags/databases/",
+        "https://docs.docker.com/tags/deploy/",
+        "https://docs.docker.com/tags/devops/",
+        "https://docs.docker.com/tags/distributed-systems/",
+        "https://docs.docker.com/tags/faq/",
+        "https://docs.docker.com/tags/networking/",
+        "https://docs.docker.com/tags/product-demo/",
+        "https://docs.docker.com/tags/release-notes/",
+        "https://docs.docker.com/tags/secrets/",
+        "https://docs.docker.com/tags/troubleshooting/",
+        "https://forums.docker.com/",
+        "https://dockr.ly/comm-slack",
+        "https://www.docker.com/community/captains/",
+        "https://cookiepedia.co.uk/giving-consent-to-cookies",
+        "https://www.onetrust.com/products/cookie-consent/",
+    ]
 
-    # Load raw documents from the specified source
-    raw_documents = loader.load()
-    print(f"loaded {len(raw_documents)} documents")
+    # No need to split the URL list manually, FireCrawl handles the job efficiently.
+    # FireCrawl is capable of parsing and processing URLs as needed, so we can skip manual splitting or additional URL handling.
 
-    # Split the documents into smaller, manageable chunks
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=600, chunk_overlap=50)
-    documents = text_splitter.split_documents(raw_documents)
+    for url in docker_documents_base_urls:
+        print(f"FireCrawl: {url}")
 
-    # Update the metadata in each document to use full URLs
-    for doc in documents:
-        new_url = doc.metadata["source"]
-        new_url = new_url.replace("langchain-docs", "https:/")  # Update the URL to full path
-        doc.metadata.update({"source": new_url})
+        # Initialize the FireCrawlLoader with valid parameters:
+        # Removed 'crawlerOptions' and 'wait_until_done' as they were causing errors.
+        loader = FireCrawlLoader(
+            url=url,
+            mode="crawl",  # Specifies the mode as crawl to fetch the page content.
+            params={
+                "pageOptions": {"onlyMainContent": True},  # Ensures that only the main content is crawled
 
-    print(f"Going to add {len(documents)} to Pinecone")
+            },
+        )
 
-    # Add the documents to Pinecone's vector store
-    PineconeVectorStore.from_documents(
-        documents, embeddings, index_name=os.environ["INDEX_NAME"]  # Specify the index name from environment variables
-    )
-    print("****Loading to vectorstore done ***")
+        # Load the documents from the crawled pages
+        docs = loader.load()
 
-# Execute the ingest_docs function if this script is run directly
+        # Log how many documents were retrieved
+        print(f"Going to add {len(docs)} to Pinecone")
+
+        # Store the documents in Pinecone vector store, using embeddings for indexing
+        PineconeVectorStore.from_documents(
+            docs, embeddings, index_name=os.environ["INDEX_DOCKER"]
+        )
+
+        # Confirm the loading process to Pinecone is complete
+        print("****Loading to vectorstore done ***")
+
+
 if __name__ == "__main__":
-    ingest_docs()
+    ingest_docs2()
