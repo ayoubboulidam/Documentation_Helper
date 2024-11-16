@@ -1,65 +1,64 @@
-import os  # Used for accessing environment variables
+import os
+from dotenv import load_dotenv
+from typing import Any, Dict, List
 
-from dotenv import load_dotenv  # Loads environment variables from a .env file
-from langchain.chains.retrieval import create_retrieval_chain  # Creates a retrieval-based chain for answering questions
+from langchain import hub
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain.chains.history_aware_retriever import create_history_aware_retriever
+from langchain.chains.retrieval import create_retrieval_chain
+from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
+from langchain_pinecone import PineconeVectorStore
 
-load_dotenv()  # Load environment variables from the .env file
+# Load environment variables
+load_dotenv()
 
-from langchain import hub  # Provides access to pre-built LangChain components
-from langchain.chains.combine_documents import \
-    create_stuff_documents_chain  # Combines multiple documents into one chain
-from langchain_pinecone import PineconeVectorStore  # Manages the Pinecone vector database for document retrieval
-
-from langchain_google_genai import GoogleGenerativeAIEmbeddings, \
-    ChatGoogleGenerativeAI  # Google embeddings and chat model
-
-
-# Function to query the LLM with a given input
-def run_llm(query: str):
-    # Initialize the embedding model for vector search
+def run_llm(query: str, chat_history: List[Dict[str, Any]] = []) -> Dict[str, Any]:
+    """
+    Runs the LLM chain with memory and returns the result.
+    Args:
+        query (str): User query.
+        chat_history (List[Dict[str, Any]]): The ongoing chat history.
+    Returns:
+        Dict[str, Any]: Formatted response including the result and sources.
+    """
+    # Initialize embeddings and vector store
     embeddings = GoogleGenerativeAIEmbeddings(
         model="models/text-embedding-004",
-        google_api_key=os.getenv("GOOGLE_API_KEY")  # Retrieve API key from environment variables
+        google_api_key=os.getenv("GOOGLE_API_KEY")
     )
-
-    # Connect to the Pinecone vector store
     docsearch = PineconeVectorStore(
-        index_name=os.environ["INDEX_NAME"],  # Retrieve the index name from environment variables
-        embedding=embeddings  # Use the embeddings for document vectorization
+        index_name=os.getenv("INDEX_NAME"),
+        embedding=embeddings
     )
 
-    # Set up the Google chat model for response generation
+    # Configure the chat model
     chat = ChatGoogleGenerativeAI(
         model="gemini-1.5-flash-latest",
-        temperature=0  # Lower temperature for more deterministic responses
+        temperature=0
     )
 
-    # Load a pre-built retrieval-qa-chat prompt from LangChain's hub
+    # Load prompts
+    rephrase_prompt = hub.pull("langchain-ai/chat-langchain-rephrase")
     retrieval_qa_chat_prompt = hub.pull("langchain-ai/retrieval-qa-chat")
 
-    # Combine documents into a single chain using the chat model and prompt
+    # Create chains
     stuff_documents_chain = create_stuff_documents_chain(chat, retrieval_qa_chat_prompt)
-
-    # Create the final retrieval-based chain
-    qa = create_retrieval_chain(
-        retriever=docsearch.as_retriever(),  # Use the Pinecone retriever for fetching relevant documents
-        combine_docs_chain=stuff_documents_chain  # Combine documents with the chat chain
+    history_aware_retriever = create_history_aware_retriever(
+        llm=chat,
+        retriever=docsearch.as_retriever(),
+        prompt=rephrase_prompt
+    )
+    qa_chain = create_retrieval_chain(
+        retriever=history_aware_retriever,
+        combine_docs_chain=stuff_documents_chain
     )
 
-    # Invoke the chain with the input query and return the result
-    result = qa.invoke(input={"input": query})
+    # Execute the chain
+    result = qa_chain.invoke(input={"input": query, "chat_history": chat_history})
 
-    # Format the result into a dictionary
-    new_result = {
-        "query": result["input"],  # The input query
-        "result": result["answer"],  # The generated answer
-        "source_documents": result["context"],  # The context documents used
+    # Format and return the result
+    return {
+        "query": result["input"],
+        "result": result["answer"],
+        "source_documents": result["context"]
     }
-
-    return new_result
-
-
-# Run the function and print the result when executed directly
-if __name__ == "__main__":
-    res = run_llm(query="What is a LangChain Chain?")  # Query about LangChain
-    print(res["result"])  # Print the answer
